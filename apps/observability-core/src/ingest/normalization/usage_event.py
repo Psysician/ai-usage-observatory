@@ -78,6 +78,208 @@ def _stable_hash(payload: Mapping[str, Any]) -> str:
     return sha256(rendered.encode("utf-8")).hexdigest()
 
 
+def _normalize_identity_fields(
+    *,
+    provider: str,
+    project_id: str,
+    model: str,
+    event_time: datetime | str,
+    ingested_at: datetime | str | None,
+) -> dict[str, Any]:
+    return {
+        "event_time": _parse_datetime(event_time),
+        "ingested_at": _parse_datetime(ingested_at or datetime.now(UTC)),
+        "provider": provider.strip().lower(),
+        "project_id": project_id.strip() or "unknown",
+        "model": model.strip() or "unknown",
+    }
+
+
+def _normalize_numeric_fields(
+    *,
+    input_tokens_non_cached: Any,
+    output_tokens: Any,
+    cache_read_tokens: Any,
+    cache_write_tokens: Any,
+    reasoning_tokens: Any,
+    latency_ms: Any,
+    estimated_cost_usd: Any,
+) -> dict[str, Any]:
+    return {
+        "tokens": {
+            "input_tokens_non_cached": _safe_int(input_tokens_non_cached),
+            "output_tokens": _safe_int(output_tokens),
+            "cache_read_tokens": _safe_int(cache_read_tokens),
+            "cache_write_tokens": _safe_int(cache_write_tokens),
+        },
+        "reasoning_tokens": (
+            _safe_int(reasoning_tokens) if reasoning_tokens is not None else None
+        ),
+        "latency_ms": _safe_int(latency_ms) if latency_ms is not None else None,
+        "estimated_cost_usd": _safe_float(estimated_cost_usd),
+    }
+
+
+def _build_event_identity(
+    *,
+    provider: str,
+    source_type: str,
+    source_path_or_key: str,
+    source_event_id: str,
+    event_time: datetime,
+) -> dict[str, Any]:
+    return {
+        "provider": provider,
+        "source_type": source_type,
+        "source_path_or_key": source_path_or_key,
+        "source_event_id": source_event_id,
+        "event_time": event_time.isoformat(),
+    }
+
+
+def _build_lineage_basis(
+    *,
+    event_identity: Mapping[str, Any],
+    model: str,
+    project_id: str,
+    attribution_reason_code: str,
+    attribution_confidence: float,
+    request_id: str | None,
+    status: str | None,
+    latency_ms: int | None,
+    estimated_cost_usd: float | None,
+    metadata: Mapping[str, Any],
+    tokens: Mapping[str, int],
+    reasoning_tokens: int | None,
+) -> dict[str, Any]:
+    return {
+        **event_identity,
+        "model": model,
+        "project_id": project_id,
+        "attribution_reason_code": attribution_reason_code,
+        "attribution_confidence": round(float(attribution_confidence), 4),
+        "request_id": request_id or "",
+        "status": status or "",
+        "latency_ms": latency_ms if latency_ms is not None else "",
+        "estimated_cost_usd": estimated_cost_usd if estimated_cost_usd is not None else "",
+        "metadata": repr(sorted(metadata.items())),
+        **tokens,
+        "reasoning_tokens": reasoning_tokens if reasoning_tokens is not None else "",
+    }
+
+
+def _extract_raw_fields(raw: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "source_type": str(raw["source_type"]),
+        "source_path_or_key": str(raw["source_path_or_key"]),
+        "source_event_id": str(raw["source_event_id"]),
+        "attribution_reason_code": str(raw["attribution_reason_code"]),
+        "attribution_confidence": float(raw["attribution_confidence"]),
+        "request_id": raw.get("request_id"),
+        "status": raw.get("status"),
+        "metadata": dict(raw.get("metadata") or {}),
+    }
+
+
+def _build_event_hashes(
+    *,
+    identity: Mapping[str, Any],
+    numerics: Mapping[str, Any],
+    fields: Mapping[str, Any],
+) -> tuple[str, str]:
+    event_identity = _build_event_identity(
+        provider=identity["provider"],
+        source_type=fields["source_type"],
+        source_path_or_key=fields["source_path_or_key"],
+        source_event_id=fields["source_event_id"],
+        event_time=identity["event_time"],
+    )
+    lineage_basis = _build_lineage_basis(
+        event_identity=event_identity,
+        model=identity["model"],
+        project_id=identity["project_id"],
+        attribution_reason_code=fields["attribution_reason_code"],
+        attribution_confidence=fields["attribution_confidence"],
+        request_id=fields["request_id"],
+        status=fields["status"],
+        latency_ms=numerics["latency_ms"],
+        estimated_cost_usd=numerics["estimated_cost_usd"],
+        metadata=fields["metadata"],
+        tokens=numerics["tokens"],
+        reasoning_tokens=numerics["reasoning_tokens"],
+    )
+    return _stable_hash(event_identity), _stable_hash(lineage_basis)
+
+
+def _build_usage_event(
+    *,
+    identity: Mapping[str, Any],
+    numerics: Mapping[str, Any],
+    fields: Mapping[str, Any],
+    event_id: str,
+    lineage_hash: str,
+) -> UsageEvent:
+    return UsageEvent(
+        event_id=event_id,
+        source_event_id=fields["source_event_id"],
+        event_time=identity["event_time"],
+        ingested_at=identity["ingested_at"],
+        provider=identity["provider"],
+        model=identity["model"],
+        model_family=_model_family(identity["model"]),
+        project_id=identity["project_id"],
+        attribution_confidence=max(min(fields["attribution_confidence"], 1.0), 0.0),
+        attribution_reason_code=fields["attribution_reason_code"].strip() or "unknown_fallback",
+        input_tokens_non_cached=numerics["tokens"]["input_tokens_non_cached"],
+        output_tokens=numerics["tokens"]["output_tokens"],
+        cache_read_tokens=numerics["tokens"]["cache_read_tokens"],
+        cache_write_tokens=numerics["tokens"]["cache_write_tokens"],
+        reasoning_tokens=numerics["reasoning_tokens"],
+        source_type=fields["source_type"],
+        source_path_or_key=fields["source_path_or_key"],
+        lineage_hash=lineage_hash,
+        request_id=(
+            fields["request_id"] if fields["request_id"] is None else str(fields["request_id"])
+        ),
+        status=fields["status"] if fields["status"] is None else str(fields["status"]),
+        latency_ms=numerics["latency_ms"],
+        estimated_cost_usd=numerics["estimated_cost_usd"],
+        metadata=fields["metadata"],
+    )
+
+
+def _normalize_usage_event_from_raw(raw: Mapping[str, Any]) -> UsageEvent:
+    identity = _normalize_identity_fields(
+        provider=str(raw["provider"]),
+        project_id=str(raw["project_id"]),
+        model=str(raw["model"]),
+        event_time=raw["event_time"],
+        ingested_at=raw.get("ingested_at"),
+    )
+    numerics = _normalize_numeric_fields(
+        input_tokens_non_cached=raw.get("input_tokens_non_cached", 0),
+        output_tokens=raw.get("output_tokens", 0),
+        cache_read_tokens=raw.get("cache_read_tokens", 0),
+        cache_write_tokens=raw.get("cache_write_tokens", 0),
+        reasoning_tokens=raw.get("reasoning_tokens"),
+        latency_ms=raw.get("latency_ms"),
+        estimated_cost_usd=raw.get("estimated_cost_usd"),
+    )
+    fields = _extract_raw_fields(raw)
+    event_id, lineage_hash = _build_event_hashes(
+        identity=identity,
+        numerics=numerics,
+        fields=fields,
+    )
+    return _build_usage_event(
+        identity=identity,
+        numerics=numerics,
+        fields=fields,
+        event_id=event_id,
+        lineage_hash=lineage_hash,
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class UsageEvent:
     event_id: str
@@ -182,72 +384,4 @@ def normalize_usage_event(
     ingested_at: datetime | str | None = None,
     metadata: Mapping[str, Any] | None = None,
 ) -> UsageEvent:
-    normalized_event_time = _parse_datetime(event_time)
-    normalized_ingested_at = _parse_datetime(ingested_at or datetime.now(UTC))
-    normalized_provider = provider.strip().lower()
-    normalized_project = project_id.strip() or "unknown"
-    normalized_model = model.strip() or "unknown"
-
-    tokens = {
-        "input_tokens_non_cached": _safe_int(input_tokens_non_cached),
-        "output_tokens": _safe_int(output_tokens),
-        "cache_read_tokens": _safe_int(cache_read_tokens),
-        "cache_write_tokens": _safe_int(cache_write_tokens),
-    }
-    normalized_reasoning = (
-        _safe_int(reasoning_tokens) if reasoning_tokens is not None else None
-    )
-    normalized_latency = _safe_int(latency_ms) if latency_ms is not None else None
-    normalized_cost = _safe_float(estimated_cost_usd)
-    normalized_metadata = dict(metadata or {})
-
-    event_identity = {
-        "provider": normalized_provider,
-        "source_type": source_type,
-        "source_path_or_key": source_path_or_key,
-        "source_event_id": source_event_id,
-        "event_time": normalized_event_time.isoformat(),
-    }
-    lineage_basis = {
-        **event_identity,
-        "model": normalized_model,
-        "project_id": normalized_project,
-        "attribution_reason_code": attribution_reason_code,
-        "attribution_confidence": round(float(attribution_confidence), 4),
-        "request_id": request_id or "",
-        "status": status or "",
-        "latency_ms": normalized_latency if normalized_latency is not None else "",
-        "estimated_cost_usd": normalized_cost if normalized_cost is not None else "",
-        "metadata": repr(sorted(normalized_metadata.items())),
-        **tokens,
-        "reasoning_tokens": normalized_reasoning if normalized_reasoning is not None else "",
-    }
-    event_id = _stable_hash(event_identity)
-    lineage_hash = _stable_hash(lineage_basis)
-
-    return UsageEvent(
-        event_id=event_id,
-        source_event_id=source_event_id,
-        event_time=normalized_event_time,
-        ingested_at=normalized_ingested_at,
-        provider=normalized_provider,
-        model=normalized_model,
-        model_family=_model_family(normalized_model),
-        project_id=normalized_project,
-        attribution_confidence=max(min(float(attribution_confidence), 1.0), 0.0),
-        attribution_reason_code=attribution_reason_code.strip() or "unknown_fallback",
-        input_tokens_non_cached=tokens["input_tokens_non_cached"],
-        output_tokens=tokens["output_tokens"],
-        cache_read_tokens=tokens["cache_read_tokens"],
-        cache_write_tokens=tokens["cache_write_tokens"],
-        reasoning_tokens=normalized_reasoning,
-        source_type=source_type,
-        source_path_or_key=source_path_or_key,
-        lineage_hash=lineage_hash,
-        request_id=request_id,
-        status=status,
-        latency_ms=normalized_latency,
-        estimated_cost_usd=normalized_cost,
-        metadata=normalized_metadata,
-    )
-
+    return _normalize_usage_event_from_raw(locals())

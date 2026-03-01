@@ -60,11 +60,11 @@
       "id": "qa-007",
       "scope": "*",
       "check": "Validate structural quality baseline: no GOD_FUNCTION violations in modified implementation code (function length > 50 lines or nesting depth > 3).",
-      "status": "FAIL",
+      "status": "PASS",
       "severity": "SHOULD",
       "group_id": "umbrella",
-      "version": 2,
-      "finding": "GOD_FUNCTION threshold exceeded in multiple implementation functions (e.g., normalize_usage_event len=91, parse_* providers len~81-85, resolve_project_attribution len=95)."
+      "version": 3,
+      "finding": "Refactor complete: normalize_usage_event, resolve_project_attribution, and provider parse_* functions were split into smaller helpers; function-size threshold now satisfied."
     },
     {
       "id": "qa-008",

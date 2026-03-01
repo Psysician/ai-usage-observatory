@@ -44,6 +44,92 @@ def _extract_project_from_path(path_value: str | None) -> str | None:
     return None
 
 
+def _resolve_from_metadata(metadata: Mapping[str, Any]) -> AttributionResult | None:
+    metadata_fields = (
+        "project_id",
+        "project",
+        "repo",
+        "repository",
+        "repo_name",
+        "workspace_project",
+    )
+    for field in metadata_fields:
+        candidate = _clean_project(metadata.get(field))
+        if candidate:
+            return AttributionResult(
+                project_id=candidate,
+                confidence=0.95,
+                reason_code="metadata_project_marker",
+                evidence=f"metadata:{field}",
+            )
+    return None
+
+
+def _resolve_from_session(
+    session_id: str | None,
+    session_project_map: Mapping[str, str],
+) -> AttributionResult | None:
+    if not session_id:
+        return None
+    mapped = _clean_project(session_project_map.get(session_id))
+    if not mapped:
+        return None
+    return AttributionResult(
+        project_id=mapped,
+        confidence=0.9,
+        reason_code="session_linkage_map",
+        evidence=f"session_id:{session_id}",
+    )
+
+
+def _resolve_from_workspace_map(
+    candidate_paths: list[str],
+    workspace_project_map: Mapping[str, str],
+) -> AttributionResult | None:
+    for candidate_path in candidate_paths:
+        mapped = _clean_project(workspace_project_map.get(candidate_path))
+        if mapped:
+            return AttributionResult(
+                project_id=mapped,
+                confidence=0.85,
+                reason_code="workspace_path_map",
+                evidence=f"workspace:{candidate_path}",
+            )
+    return None
+
+
+def _resolve_from_path_prefix_map(
+    candidate_paths: list[str],
+    path_project_map: Mapping[str, str],
+) -> AttributionResult | None:
+    for candidate_path in candidate_paths:
+        for prefix, mapped_project in sorted(path_project_map.items()):
+            if not candidate_path.startswith(prefix):
+                continue
+            cleaned_project = _clean_project(mapped_project)
+            if cleaned_project:
+                return AttributionResult(
+                    project_id=cleaned_project,
+                    confidence=0.75,
+                    reason_code="path_prefix_map",
+                    evidence=f"path_prefix:{prefix}",
+                )
+    return None
+
+
+def _resolve_from_path_heuristic(candidate_paths: list[str]) -> AttributionResult | None:
+    for candidate_path in candidate_paths:
+        heuristic = _extract_project_from_path(candidate_path)
+        if heuristic:
+            return AttributionResult(
+                project_id=heuristic,
+                confidence=0.6,
+                reason_code="path_heuristic",
+                evidence=f"path:{candidate_path}",
+            )
+    return None
+
+
 def resolve_project_attribution(
     *,
     explicit_project_id: str | None = None,
@@ -70,68 +156,17 @@ def resolve_project_attribution(
             evidence="explicit project id field",
         )
 
-    metadata_fields = (
-        "project_id",
-        "project",
-        "repo",
-        "repository",
-        "repo_name",
-        "workspace_project",
-    )
-    for field in metadata_fields:
-        candidate = _clean_project(normalized_metadata.get(field))
-        if candidate:
-            return AttributionResult(
-                project_id=candidate,
-                confidence=0.95,
-                reason_code="metadata_project_marker",
-                evidence=f"metadata:{field}",
-            )
-
-    if session_id:
-        mapped_session_project = _clean_project(normalized_session_map.get(session_id))
-        if mapped_session_project:
-            return AttributionResult(
-                project_id=mapped_session_project,
-                confidence=0.9,
-                reason_code="session_linkage_map",
-                evidence=f"session_id:{session_id}",
-            )
-
     candidate_paths = [path for path in (workspace_path, source_path) if path]
-    for candidate_path in candidate_paths:
-        mapped_workspace_project = _clean_project(
-            normalized_workspace_map.get(candidate_path)
-        )
-        if mapped_workspace_project:
-            return AttributionResult(
-                project_id=mapped_workspace_project,
-                confidence=0.85,
-                reason_code="workspace_path_map",
-                evidence=f"workspace:{candidate_path}",
-            )
-
-    for candidate_path in candidate_paths:
-        for prefix, mapped_project in sorted(normalized_path_map.items()):
-            if candidate_path.startswith(prefix):
-                cleaned_project = _clean_project(mapped_project)
-                if cleaned_project:
-                    return AttributionResult(
-                        project_id=cleaned_project,
-                        confidence=0.75,
-                        reason_code="path_prefix_map",
-                        evidence=f"path_prefix:{prefix}",
-                    )
-
-    for candidate_path in candidate_paths:
-        heuristic = _extract_project_from_path(candidate_path)
-        if heuristic:
-            return AttributionResult(
-                project_id=heuristic,
-                confidence=0.6,
-                reason_code="path_heuristic",
-                evidence=f"path:{candidate_path}",
-            )
+    resolvers = (
+        _resolve_from_metadata(normalized_metadata),
+        _resolve_from_session(session_id, normalized_session_map),
+        _resolve_from_workspace_map(candidate_paths, normalized_workspace_map),
+        _resolve_from_path_prefix_map(candidate_paths, normalized_path_map),
+        _resolve_from_path_heuristic(candidate_paths),
+    )
+    for result in resolvers:
+        if result is not None:
+            return result
 
     return AttributionResult(
         project_id=unknown_project_id,

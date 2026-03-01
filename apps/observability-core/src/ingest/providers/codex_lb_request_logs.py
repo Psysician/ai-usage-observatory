@@ -73,6 +73,86 @@ def _infer_provider(record: Mapping[str, Any]) -> str:
     return "openai"
 
 
+def _extract_usage_values(record: Mapping[str, Any]) -> dict[str, Any]:
+    input_tokens = _safe_int(
+        _first(
+            record,
+            "prompt_tokens",
+            "input_tokens",
+            "input",
+            default=0,
+        )
+    )
+    output_tokens = _safe_int(
+        _first(
+            record,
+            "completion_tokens",
+            "output_tokens",
+            "output",
+            default=0,
+        )
+    )
+    cache_read_tokens = _safe_int(
+        _first(
+            record,
+            "cached_prompt_tokens",
+            "cache_read_tokens",
+            "cached_tokens",
+            default=0,
+        )
+    )
+    cache_write_tokens = _safe_int(_first(record, "cache_write_tokens", default=0))
+    reasoning_tokens = _first(record, "reasoning_tokens")
+    return {
+        "input_tokens_non_cached": input_tokens,
+        "output_tokens": output_tokens,
+        "cache_read_tokens": cache_read_tokens,
+        "cache_write_tokens": cache_write_tokens,
+        "reasoning_tokens": (
+            _safe_int(reasoning_tokens) if reasoning_tokens is not None else None
+        ),
+    }
+
+
+def _build_parsed_payload(
+    record: Mapping[str, Any],
+    *,
+    index: int,
+    token_values: Mapping[str, Any],
+) -> dict[str, Any]:
+    return {
+        "provider": _infer_provider(record),
+        "source_type": "codex_lb_request_logs",
+        "source_event_id": str(
+            _first(
+                record,
+                "request_id",
+                "id",
+                "event_id",
+                default=f"codex-lb-{index}",
+            )
+        ),
+        "event_time": _parse_datetime(
+            _first(record, "timestamp", "created_at", "event_time"),
+            fallback_index=index,
+        ),
+        "model": str(_first(record, "model", default="openai-unknown")),
+        "input_tokens_non_cached": token_values["input_tokens_non_cached"],
+        "output_tokens": token_values["output_tokens"],
+        "cache_read_tokens": token_values["cache_read_tokens"],
+        "cache_write_tokens": token_values["cache_write_tokens"],
+        "reasoning_tokens": token_values["reasoning_tokens"],
+        "project_hint": _first(record, "project_id", "project"),
+        "session_id": _first(record, "session_id", "conversation_id"),
+        "workspace_path": _first(record, "cwd", "workspace_path", "path"),
+        "metadata": dict(record),
+        "request_id": _first(record, "request_id"),
+        "status": _first(record, "status"),
+        "latency_ms": _first(record, "latency_ms"),
+        "estimated_cost_usd": _first(record, "cost_usd", "estimated_cost_usd"),
+    }
+
+
 def parse_codex_lb_request_logs(
     records: Iterable[str | Mapping[str, Any]],
 ) -> tuple[list[dict[str, Any]], ParseStats]:
@@ -89,69 +169,8 @@ def parse_codex_lb_request_logs(
         if not record:
             continue
 
-        input_tokens = _safe_int(
-            _first(
-                record,
-                "prompt_tokens",
-                "input_tokens",
-                "input",
-                default=0,
-            )
-        )
-        output_tokens = _safe_int(
-            _first(
-                record,
-                "completion_tokens",
-                "output_tokens",
-                "output",
-                default=0,
-            )
-        )
-        cache_read_tokens = _safe_int(
-            _first(
-                record,
-                "cached_prompt_tokens",
-                "cache_read_tokens",
-                "cached_tokens",
-                default=0,
-            )
-        )
-        cache_write_tokens = _safe_int(_first(record, "cache_write_tokens", default=0))
-        reasoning_tokens = _first(record, "reasoning_tokens")
-
-        parsed.append(
-            {
-                "provider": _infer_provider(record),
-                "source_type": "codex_lb_request_logs",
-                "source_event_id": str(
-                    _first(
-                        record,
-                        "request_id",
-                        "id",
-                        "event_id",
-                        default=f"codex-lb-{index}",
-                    )
-                ),
-                "event_time": _parse_datetime(
-                    _first(record, "timestamp", "created_at", "event_time"),
-                    fallback_index=index,
-                ),
-                "model": str(_first(record, "model", default="openai-unknown")),
-                "input_tokens_non_cached": input_tokens,
-                "output_tokens": output_tokens,
-                "cache_read_tokens": cache_read_tokens,
-                "cache_write_tokens": cache_write_tokens,
-                "reasoning_tokens": _safe_int(reasoning_tokens) if reasoning_tokens is not None else None,
-                "project_hint": _first(record, "project_id", "project"),
-                "session_id": _first(record, "session_id", "conversation_id"),
-                "workspace_path": _first(record, "cwd", "workspace_path", "path"),
-                "metadata": dict(record),
-                "request_id": _first(record, "request_id"),
-                "status": _first(record, "status"),
-                "latency_ms": _first(record, "latency_ms"),
-                "estimated_cost_usd": _first(record, "cost_usd", "estimated_cost_usd"),
-            }
-        )
+        token_values = _extract_usage_values(record)
+        parsed.append(_build_parsed_payload(record, index=index, token_values=token_values))
 
     return parsed, ParseStats(parsed_records=len(parsed), skipped_malformed_lines=malformed)
 
@@ -206,4 +225,3 @@ def adapt_codex_lb_request_logs(
         )
 
     return events, stats
-

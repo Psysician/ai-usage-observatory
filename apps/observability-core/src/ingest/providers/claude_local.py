@@ -63,6 +63,97 @@ def _coerce_record(raw: str | Mapping[str, Any]) -> Mapping[str, Any] | None:
     return json.loads(line)
 
 
+def _usage_int(
+    usage: Mapping[str, Any],
+    record: Mapping[str, Any],
+    *,
+    usage_keys: tuple[str, ...],
+    record_keys: tuple[str, ...],
+) -> int:
+    return _safe_int(
+        _first(
+            usage,
+            *usage_keys,
+            default=_first(record, *record_keys, default=0),
+        )
+    )
+
+
+def _extract_usage_values(
+    record: Mapping[str, Any],
+    usage: Mapping[str, Any],
+) -> dict[str, Any]:
+    input_tokens = _usage_int(
+        usage,
+        record,
+        usage_keys=("input_tokens", "prompt_tokens", "input"),
+        record_keys=("input_tokens", "prompt_tokens"),
+    )
+    output_tokens = _usage_int(
+        usage,
+        record,
+        usage_keys=("output_tokens", "completion_tokens", "output"),
+        record_keys=("output_tokens", "completion_tokens"),
+    )
+    cache_read_tokens = _usage_int(
+        usage,
+        record,
+        usage_keys=("cache_read_input_tokens", "cache_read_tokens", "cached_tokens"),
+        record_keys=("cache_read_tokens", "cached_tokens"),
+    )
+    cache_write_tokens = _usage_int(
+        usage,
+        record,
+        usage_keys=("cache_creation_input_tokens", "cache_write_tokens"),
+        record_keys=("cache_write_tokens",),
+    )
+    reasoning_tokens = _first(
+        usage,
+        "reasoning_tokens",
+        default=_first(record, "reasoning_tokens"),
+    )
+    return {
+        "input_tokens_non_cached": input_tokens,
+        "output_tokens": output_tokens,
+        "cache_read_tokens": cache_read_tokens,
+        "cache_write_tokens": cache_write_tokens,
+        "reasoning_tokens": (
+            _safe_int(reasoning_tokens) if reasoning_tokens is not None else None
+        ),
+    }
+
+
+def _build_parsed_payload(
+    record: Mapping[str, Any],
+    *,
+    index: int,
+    token_values: Mapping[str, Any],
+) -> dict[str, Any]:
+    return {
+        "provider": "claude",
+        "source_type": "claude_local",
+        "source_event_id": str(_first(record, "id", "event_id", default=f"claude-{index}")),
+        "event_time": _parse_datetime(
+            _first(record, "timestamp", "event_time", "created_at"),
+            fallback_index=index,
+        ),
+        "model": str(_first(record, "model", default="claude-unknown")),
+        "input_tokens_non_cached": token_values["input_tokens_non_cached"],
+        "output_tokens": token_values["output_tokens"],
+        "cache_read_tokens": token_values["cache_read_tokens"],
+        "cache_write_tokens": token_values["cache_write_tokens"],
+        "reasoning_tokens": token_values["reasoning_tokens"],
+        "project_hint": _first(record, "project_id", "project"),
+        "session_id": _first(record, "session_id", "conversation_id", "session"),
+        "workspace_path": _first(record, "cwd", "workspace_path", "path"),
+        "metadata": dict(record),
+        "request_id": _first(record, "request_id"),
+        "status": _first(record, "status"),
+        "latency_ms": _first(record, "latency_ms"),
+        "estimated_cost_usd": _first(record, "estimated_cost_usd", "cost_usd"),
+    }
+
+
 def parse_claude_local_records(
     records: Iterable[str | Mapping[str, Any]],
 ) -> tuple[list[dict[str, Any]], ParseStats]:
@@ -80,72 +171,8 @@ def parse_claude_local_records(
             continue
 
         usage = record.get("usage", {}) if isinstance(record.get("usage"), Mapping) else {}
-
-        input_tokens = _safe_int(
-            _first(
-                usage,
-                "input_tokens",
-                "prompt_tokens",
-                "input",
-                default=_first(record, "input_tokens", "prompt_tokens", default=0),
-            )
-        )
-        output_tokens = _safe_int(
-            _first(
-                usage,
-                "output_tokens",
-                "completion_tokens",
-                "output",
-                default=_first(record, "output_tokens", "completion_tokens", default=0),
-            )
-        )
-        cache_read_tokens = _safe_int(
-            _first(
-                usage,
-                "cache_read_input_tokens",
-                "cache_read_tokens",
-                "cached_tokens",
-                default=_first(record, "cache_read_tokens", "cached_tokens", default=0),
-            )
-        )
-        cache_write_tokens = _safe_int(
-            _first(
-                usage,
-                "cache_creation_input_tokens",
-                "cache_write_tokens",
-                default=_first(record, "cache_write_tokens", default=0),
-            )
-        )
-        reasoning_tokens = _first(
-            usage,
-            "reasoning_tokens",
-            default=_first(record, "reasoning_tokens"),
-        )
-        parsed.append(
-            {
-                "provider": "claude",
-                "source_type": "claude_local",
-                "source_event_id": str(_first(record, "id", "event_id", default=f"claude-{index}")),
-                "event_time": _parse_datetime(
-                    _first(record, "timestamp", "event_time", "created_at"),
-                    fallback_index=index,
-                ),
-                "model": str(_first(record, "model", default="claude-unknown")),
-                "input_tokens_non_cached": input_tokens,
-                "output_tokens": output_tokens,
-                "cache_read_tokens": cache_read_tokens,
-                "cache_write_tokens": cache_write_tokens,
-                "reasoning_tokens": _safe_int(reasoning_tokens) if reasoning_tokens is not None else None,
-                "project_hint": _first(record, "project_id", "project"),
-                "session_id": _first(record, "session_id", "conversation_id", "session"),
-                "workspace_path": _first(record, "cwd", "workspace_path", "path"),
-                "metadata": dict(record),
-                "request_id": _first(record, "request_id"),
-                "status": _first(record, "status"),
-                "latency_ms": _first(record, "latency_ms"),
-                "estimated_cost_usd": _first(record, "estimated_cost_usd", "cost_usd"),
-            }
-        )
+        token_values = _extract_usage_values(record, usage)
+        parsed.append(_build_parsed_payload(record, index=index, token_values=token_values))
 
     return parsed, ParseStats(parsed_records=len(parsed), skipped_malformed_lines=malformed)
 
@@ -200,4 +227,3 @@ def adapt_claude_local_records(
         )
 
     return events, stats
-
