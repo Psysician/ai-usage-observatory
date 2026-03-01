@@ -1,0 +1,13 @@
+{
+  "name": "dashboard-web",
+  "private": true,
+  "version": "0.0.0",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test:e2e": "playwright test tests/e2e/customization-and-share.spec.ts --workers=1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.2",
+    "typescript": "^5.6.3"
+  }
+}

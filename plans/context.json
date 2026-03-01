@@ -1,0 +1,50 @@
+{
+  "task_spec": [
+    "Design a new customizable dashboard product for multi-provider AI usage observability (Claude + OpenAI) with project-level attribution, cost/token analytics, and Claude memory-file insights.",
+    "scope: greenfield project architecture, feature set, data model, UX customization model, phased implementation plan",
+    "out-of-scope: writing production code in this step",
+    "out-of-scope: committing to one fixed frontend framework before tradeoff review"
+  ],
+  "constraints": [
+    "MUST: support provider split and per-project attribution for Claude and OpenAI",
+    "MUST: include Claude memory-file analytics in dashboard features",
+    "MUST: support fully customizable dashboard views/layouts/widgets",
+    "SHOULD: preserve local-first/privacy-first operation with optional team sync",
+    "SHOULD: keep metrics auditable with freshness and attribution confidence indicators"
+  ],
+  "entry_points": [
+    "greenfield",
+    "/home/franky/repos/cusage/bin/cusage.mjs - existing parser and cost logic reference",
+    "/home/franky/repos/codex-lb/app/db/models.py - request log schema reference",
+    "/home/franky/repos/codex-lb/app/modules/proxy/service.py - available session/project attribution signals reference"
+  ],
+  "rejected_alternatives": [
+    "pure stream-first architecture for v1 - dismissed due to high operational burden",
+    "single-provider-only analytics - dismissed because user requires Claude and OpenAI comparison"
+  ],
+  "current_understanding": [
+    "cusage already merges Claude and Codex token/cost telemetry from local sources",
+    "codex-lb already exposes request-level logs with model/token/cost/latency but lacks explicit project/provider fields",
+    "Claude memory files are available locally and can be analyzed at metadata/churn level",
+    "user wants extensive feature research plus final setup/design/roadmap plan"
+  ],
+  "assumptions": [
+    "initial release can accept estimated cost layer before full invoice reconciliation (M)",
+    "project attribution can be bootstrapped via deterministic ladder + confidence scoring (M)",
+    "target users include both individual developers and teams/FinOps viewers (H)",
+    "dashboard should be web-based with saved views and role presets (M)"
+  ],
+  "invisible_knowledge": [
+    "token/cost dashboards must distinguish estimated vs billed to avoid false precision",
+    "missing attribution and stale data must be visibly surfaced, not silently hidden",
+    "customizability needs guardrails (certified metrics, shared view governance) to avoid metric drift",
+    "auditability and trust are as important as visual richness"
+  ],
+  "reference_docs": [
+    "/home/franky/repos/cusage/README.md - cusage data sources and usage model",
+    "/home/franky/repos/cusage/bin/cusage.mjs - parsing/cost logic and cache/freshness behavior",
+    "/home/franky/repos/codex-lb/app/db/models.py - codex-lb persistent request schema",
+    "/home/franky/repos/codex-lb/app/modules/request_logs/schemas.py - request log API model",
+    "/home/franky/repos/codex-lb/app/modules/proxy/service.py - telemetry capture/session linkage points"
+  ]
+}

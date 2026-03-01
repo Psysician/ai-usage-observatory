@@ -1,0 +1,709 @@
+{
+  "plan_id": "35e7dc81-d7e5-4522-9ae9-7b0c6924b1f2",
+  "created_at": "2026-03-01T00:02:51.508064",
+  "frozen_at": null,
+  "overview": {
+    "problem": "Design a customizable multi-provider AI usage observability dashboard with project attribution, cost/token analytics, and Claude memory-file insights",
+    "approach": "Build a local-first observability stack around canonical usage_event ingestion, deterministic project attribution with confidence, dual-layer cost analytics, privacy-safe Claude memory insights, and declarative customizable dashboards with optional redacted team sync."
+  },
+  "planning_context": {
+    "decisions": [
+      {
+        "id": "DL-001",
+        "version": 1,
+        "decision": "Normalize all telemetry into a canonical usage_event ledger",
+        "reasoning": "cusage and codex-lb expose different token fields -> per-widget transforms drift over time -> canonical event normalization at ingest preserves consistency and replayability"
+      },
+      {
+        "id": "DL-002",
+        "version": 1,
+        "decision": "Use deterministic project attribution ladder with confidence scoring",
+        "reasoning": "many events miss explicit project_id -> project split is mandatory -> apply ordered attribution signals and persist confidence to keep coverage auditable"
+      },
+      {
+        "id": "DL-003",
+        "version": 1,
+        "decision": "Track estimated and billed cost as separate metrics",
+        "reasoning": "price tables are available before invoices -> invoice timing lags and can differ -> dual cost layer avoids false precision while preserving early visibility"
+      },
+      {
+        "id": "DL-004",
+        "version": 1,
+        "decision": "Attach freshness and attribution quality metadata to every widget query",
+        "reasoning": "stale sources and weak attribution look accurate in charts -> hidden uncertainty erodes trust -> expose freshness windows and confidence bands in API responses"
+      },
+      {
+        "id": "DL-005",
+        "version": 1,
+        "decision": "Model dashboards as saved declarative views over a certified widget catalog",
+        "reasoning": "full customization without guardrails causes metric drift -> users still need flexible layout and filters -> declarative saved views plus certified metrics balances flexibility and governance"
+      },
+      {
+        "id": "DL-006",
+        "version": 1,
+        "decision": "Keep storage local-first with optional redacted team sync",
+        "reasoning": "usage logs and memory artifacts are sensitive by default -> teams still need sharing in some contexts -> local primary store with opt-in redacted sync satisfies both"
+      },
+      {
+        "id": "DL-007",
+        "version": 1,
+        "decision": "Ship ingestion as batch-first with optional tailing instead of stream-first core",
+        "reasoning": "stream-first architecture raises operational burden and failure modes -> v1 needs dependable local operation -> batch snapshots plus optional tails gives lower risk path"
+      },
+      {
+        "id": "DL-008",
+        "version": 1,
+        "decision": "Define a framework-agnostic view and widget API contract before frontend framework commitment",
+        "reasoning": "framework choice remains open by requirement -> customization model must still be concrete -> stable API contract decouples product semantics from UI framework selection"
+      },
+      {
+        "id": "DL-009",
+        "version": 1,
+        "decision": "Analyze Claude memory files at metadata and churn levels by default",
+        "reasoning": "memory content can include sensitive user context -> observability requires usage and evolution signals not raw text -> metadata-first memory analytics preserves privacy and utility"
+      }
+    ],
+    "rejected_alternatives": [
+      {
+        "id": "RA-001",
+        "alternative": "Pure stream-first ingestion core",
+        "rejection_reason": "Higher operational burden and retry complexity for v1 local-first deployment.",
+        "decision_ref": "DL-007"
+      },
+      {
+        "id": "RA-002",
+        "alternative": "Single-provider analytics model",
+        "rejection_reason": "Product requirement needs Claude and OpenAI split and comparison.",
+        "decision_ref": "DL-001"
+      }
+    ],
+    "constraints": [
+      "Support provider split and per-project attribution for Claude and OpenAI.",
+      "Include Claude memory-file analytics in dashboard features.",
+      "Support fully customizable dashboard layouts and widgets.",
+      "Preserve local-first privacy-first operation with optional team sync.",
+      "Expose freshness and attribution confidence in metric payloads."
+    ],
+    "risks": [],
+    "known_risks": [
+      {
+        "id": "R-001",
+        "risk": "Project attribution false positives from weak path heuristics.",
+        "mitigation": "Store attribution reason code and confidence and allow unknown fallback instead of forced assignment.",
+        "anchor": "apps/observability-core/src/ingest/attribution/project_attribution.py",
+        "decision_ref": "DL-002"
+      },
+      {
+        "id": "R-002",
+        "risk": "Estimated costs diverge from billed invoices and confuse dashboard users.",
+        "mitigation": "Publish estimated and billed layers separately with explicit variance and freshness metadata.",
+        "anchor": "apps/observability-core/src/analytics/cost_layers.py",
+        "decision_ref": "DL-003"
+      },
+      {
+        "id": "R-003",
+        "risk": "Custom widget freedom creates metric definition drift between teams.",
+        "mitigation": "Restrict core metrics to certified widget catalog and record lineage for each widget payload.",
+        "anchor": "apps/dashboard-api/src/widgets/widget_catalog.py",
+        "decision_ref": "DL-005"
+      }
+    ]
+  },
+  "invisible_knowledge": {
+    "system": "Telemetry normalization and attribution run before analytics so every widget consumes the same canonical event ledger. Confidence and freshness are first-class dimensions and must flow through APIs and UI.",
+    "invariants": [
+      "Every stored usage event has provider source and attribution confidence metadata.",
+      "Metric responses carry freshness state and source timestamp.",
+      "Memory insights expose metadata and churn metrics without raw memory text.",
+      "Certified widget definitions remain stable when user layouts change."
+    ],
+    "tradeoffs": [
+      "Batch-first ingestion lowers operational risk but near-real-time views can lag source writes.",
+      "Confidence-based attribution increases transparency but leaves some events in unknown project bucket.",
+      "Local-first storage improves privacy but requires optional sync service for team visibility."
+    ]
+  },
+  "milestones": [
+    {
+      "id": "M-001",
+      "version": 1,
+      "number": 1,
+      "name": "Unified Event Ingestion and Project Attribution",
+      "files": [
+        "apps/observability-core/src/ingest/providers/claude_local.py",
+        "apps/observability-core/src/ingest/providers/openai_codex_local.py",
+        "apps/observability-core/src/ingest/providers/codex_lb_request_logs.py",
+        "apps/observability-core/src/ingest/attribution/project_attribution.py",
+        "apps/observability-core/src/ingest/normalization/usage_event.py",
+        "apps/observability-core/src/storage/usage_event_store.py",
+        "apps/observability-core/tests/integration/test_ingest_attribution_pipeline.py"
+      ],
+      "flags": [
+        "ingestion",
+        "attribution",
+        "auditability"
+      ],
+      "requirements": [
+        "Ingest Claude local usage signals and OpenAI Codex local usage signals",
+        "Map raw token fields into canonical usage_event schema",
+        "Resolve provider and project attribution using deterministic ladder with confidence score",
+        "Persist append-only usage events with source provenance and ingest timestamp"
+      ],
+      "acceptance_criteria": [
+        "Daily and hourly aggregates match source totals within tolerance",
+        "Every stored event includes provider and project_id or unknown with confidence field",
+        "Attribution pipeline emits explainable reason code for each event"
+      ],
+      "tests": [
+        "Integration test replays mixed source fixtures and verifies canonical event totals",
+        "Property style test checks attribution ladder determinism for repeated inputs",
+        "Failure test validates parser resilience for malformed JSONL lines"
+      ],
+      "code_intents": [
+        {
+          "id": "CI-M-001-001",
+          "version": 1,
+          "file": "apps/observability-core/src/ingest/normalization/usage_event.py",
+          "function": "normalize_usage_event",
+          "behavior": "Transform provider-specific token payloads into canonical usage_event records with standardized token categories, cost placeholders, source metadata, and ingest timestamp.",
+          "decision_refs": [
+            "DL-001",
+            "DL-003"
+          ]
+        },
+        {
+          "id": "CI-M-001-002",
+          "version": 1,
+          "file": "apps/observability-core/src/ingest/attribution/project_attribution.py",
+          "function": "resolve_project_attribution",
+          "behavior": "Apply deterministic attribution ladder across explicit project markers, session metadata, path heuristics, and unknown fallback while returning confidence and reason code.",
+          "decision_refs": [
+            "DL-002",
+            "DL-004"
+          ]
+        },
+        {
+          "id": "CI-M-001-003",
+          "version": 1,
+          "file": "apps/observability-core/src/storage/usage_event_store.py",
+          "function": "append_usage_events",
+          "behavior": "Persist normalized events as append-only records keyed by source event id with lineage fields to support replay and audit queries.",
+          "decision_refs": [
+            "DL-001",
+            "DL-006",
+            "DL-007"
+          ]
+        }
+      ],
+      "code_changes": [],
+      "documentation": {
+        "module_comment": null,
+        "docstrings": [],
+        "function_blocks": [],
+        "inline_comments": []
+      },
+      "is_documentation_only": false,
+      "delegated_to": null
+    },
+    {
+      "id": "M-002",
+      "version": 1,
+      "number": 2,
+      "name": "Cost Token and Freshness Analytics Engine",
+      "files": [
+        "apps/observability-core/src/analytics/cost_layers.py",
+        "apps/observability-core/src/analytics/token_aggregates.py",
+        "apps/observability-core/src/analytics/freshness.py",
+        "apps/observability-api/src/routes/metrics.py",
+        "apps/observability-api/src/routes/projects.py",
+        "apps/observability-api/tests/integration/test_metrics_auditability.py"
+      ],
+      "flags": [
+        "analytics",
+        "api",
+        "auditability"
+      ],
+      "requirements": [
+        "Compute provider split token and cost aggregates at project and workspace levels",
+        "Expose estimated and billed cost as separate metrics with variance field",
+        "Attach freshness timestamp and stale classification for each metric payload"
+      ],
+      "acceptance_criteria": [
+        "Metrics API returns provider and project splits for all supported time buckets",
+        "Cost responses include estimated and billed layers with clear labels",
+        "Freshness metadata changes when source snapshots age past configured threshold"
+      ],
+      "tests": [
+        "Integration test validates metrics API against seeded canonical events",
+        "Contract test asserts freshness and confidence fields are always present",
+        "Edge test covers missing billed cost fallback behavior"
+      ],
+      "code_intents": [
+        {
+          "id": "CI-M-002-001",
+          "version": 1,
+          "file": "apps/observability-core/src/analytics/cost_layers.py",
+          "function": "compute_cost_layers",
+          "behavior": "Compute estimated and billed cost layers per provider and project and include explicit variance and unknown-billing flags for downstream dashboards.",
+          "decision_refs": [
+            "DL-003",
+            "DL-004"
+          ]
+        },
+        {
+          "id": "CI-M-002-002",
+          "version": 1,
+          "file": "apps/observability-core/src/analytics/freshness.py",
+          "function": "build_freshness_metadata",
+          "behavior": "Derive freshness state from ingest lag, source scan completion, and attribution completeness and publish normalized freshness envelope for every metric.",
+          "decision_refs": [
+            "DL-004",
+            "DL-007"
+          ]
+        },
+        {
+          "id": "CI-M-002-003",
+          "version": 1,
+          "file": "apps/observability-api/src/routes/metrics.py",
+          "function": "get_metrics",
+          "behavior": "Serve project and provider split metrics with cost layers and freshness metadata through stable API contracts used by widgets.",
+          "decision_refs": [
+            "DL-001",
+            "DL-003",
+            "DL-004",
+            "DL-008"
+          ]
+        }
+      ],
+      "code_changes": [],
+      "documentation": {
+        "module_comment": null,
+        "docstrings": [],
+        "function_blocks": [],
+        "inline_comments": []
+      },
+      "is_documentation_only": false,
+      "delegated_to": null
+    },
+    {
+      "id": "M-003",
+      "version": 1,
+      "number": 3,
+      "name": "Claude Memory File Insight Pipeline",
+      "files": [
+        "apps/observability-core/src/memory/claude_memory_scanner.py",
+        "apps/observability-core/src/memory/memory_fact_index.py",
+        "apps/observability-core/src/memory/memory_churn_metrics.py",
+        "apps/observability-api/src/routes/memory_insights.py",
+        "apps/observability-api/tests/integration/test_memory_insights_api.py"
+      ],
+      "flags": [
+        "memory",
+        "privacy",
+        "analytics"
+      ],
+      "requirements": [
+        "Scan Claude memory files from local workspace boundaries",
+        "Extract metadata level signals for size churn write frequency and topic tags",
+        "Publish project-level memory insight metrics without exposing raw memory text"
+      ],
+      "acceptance_criteria": [
+        "Memory insights API returns churn and growth trends by project",
+        "Raw memory content is absent from response contracts and persistence layer",
+        "Scanner marks unavailable files with explicit freshness and error metadata"
+      ],
+      "tests": [
+        "Integration test runs scanner on synthetic memory files and validates metrics",
+        "Security test asserts no raw memory body is serialized into API payload",
+        "Error test verifies missing file handling and stale markers"
+      ],
+      "code_intents": [
+        {
+          "id": "CI-M-003-001",
+          "version": 1,
+          "file": "apps/observability-core/src/memory/claude_memory_scanner.py",
+          "function": "scan_memory_files",
+          "behavior": "Collect Claude memory file metadata including file size mtime and record counts within configured workspace boundaries without loading raw body into analytics storage.",
+          "decision_refs": [
+            "DL-006",
+            "DL-009"
+          ]
+        },
+        {
+          "id": "CI-M-003-002",
+          "version": 1,
+          "file": "apps/observability-core/src/memory/memory_churn_metrics.py",
+          "function": "build_memory_churn_metrics",
+          "behavior": "Compute project-level churn indicators such as growth rate update cadence and retention windows from metadata snapshots.",
+          "decision_refs": [
+            "DL-009",
+            "DL-004"
+          ]
+        },
+        {
+          "id": "CI-M-003-003",
+          "version": 1,
+          "file": "apps/observability-api/src/routes/memory_insights.py",
+          "function": "get_memory_insights",
+          "behavior": "Expose memory insight endpoints that include trend data freshness metadata and privacy-safe diagnostic fields.",
+          "decision_refs": [
+            "DL-004",
+            "DL-006",
+            "DL-009"
+          ]
+        }
+      ],
+      "code_changes": [],
+      "documentation": {
+        "module_comment": null,
+        "docstrings": [],
+        "function_blocks": [],
+        "inline_comments": []
+      },
+      "is_documentation_only": false,
+      "delegated_to": null
+    },
+    {
+      "id": "M-004",
+      "version": 1,
+      "number": 4,
+      "name": "Declarative Custom Views and Widget Query Contracts",
+      "files": [
+        "apps/dashboard-api/src/views/view_model.py",
+        "apps/dashboard-api/src/views/view_service.py",
+        "apps/dashboard-api/src/widgets/widget_catalog.py",
+        "apps/dashboard-api/src/widgets/query_resolver.py",
+        "apps/dashboard-api/src/routes/views.py",
+        "apps/dashboard-api/tests/integration/test_custom_views_widgets.py"
+      ],
+      "flags": [
+        "customization",
+        "governance",
+        "api"
+      ],
+      "requirements": [
+        "Represent dashboards as declarative saved views with layout filter and widget bindings",
+        "Provide certified widget catalog with parameter schema and capability tags",
+        "Resolve widget queries against canonical analytics APIs with policy checks"
+      ],
+      "acceptance_criteria": [
+        "Users can create update and clone views without mutating certified metric definitions",
+        "Widget resolver enforces parameter validation and role-based capability constraints",
+        "Shared view payloads remain stable across backend restarts"
+      ],
+      "tests": [
+        "Integration test validates create update clone and delete view flows",
+        "Contract test verifies widget schema validation failures return deterministic errors",
+        "Regression test ensures saved view JSON round-trips without field loss"
+      ],
+      "code_intents": [
+        {
+          "id": "CI-M-004-001",
+          "version": 1,
+          "file": "apps/dashboard-api/src/views/view_model.py",
+          "function": "validate_view_spec",
+          "behavior": "Define declarative view schema covering layout, widget bindings, filter scopes, and ownership metadata with strict validation rules.",
+          "decision_refs": [
+            "DL-005",
+            "DL-008"
+          ]
+        },
+        {
+          "id": "CI-M-004-002",
+          "version": 1,
+          "file": "apps/dashboard-api/src/widgets/widget_catalog.py",
+          "function": "list_certified_widgets",
+          "behavior": "Provide certified widget registry with metric lineage, parameter schema, capability tags, and deprecation metadata.",
+          "decision_refs": [
+            "DL-005",
+            "DL-008"
+          ]
+        },
+        {
+          "id": "CI-M-004-003",
+          "version": 1,
+          "file": "apps/dashboard-api/src/widgets/query_resolver.py",
+          "function": "resolve_widget_query",
+          "behavior": "Resolve widget requests into canonical analytics queries while enforcing parameter checks and policy constraints before execution.",
+          "decision_refs": [
+            "DL-001",
+            "DL-004",
+            "DL-005"
+          ]
+        }
+      ],
+      "code_changes": [],
+      "documentation": {
+        "module_comment": null,
+        "docstrings": [],
+        "function_blocks": [],
+        "inline_comments": []
+      },
+      "is_documentation_only": false,
+      "delegated_to": null
+    },
+    {
+      "id": "M-005",
+      "version": 1,
+      "number": 5,
+      "name": "Dashboard Workspace UX and Optional Team Sync",
+      "files": [
+        "apps/dashboard-web/src/pages/dashboard/index.tsx",
+        "apps/dashboard-web/src/components/layout/GridEditor.tsx",
+        "apps/dashboard-web/src/components/widgets/WidgetShell.tsx",
+        "apps/dashboard-web/src/state/viewStore.ts",
+        "apps/dashboard-sync/src/sync/share_service.py",
+        "apps/dashboard-sync/src/sync/redaction_policy.py",
+        "apps/dashboard-web/tests/e2e/customization-and-share.spec.ts"
+      ],
+      "flags": [
+        "frontend",
+        "sync",
+        "privacy"
+      ],
+      "requirements": [
+        "Render drag-and-drop dashboard workspace from declarative view contracts",
+        "Surface freshness and attribution confidence indicators within each widget shell",
+        "Allow optional team sync for saved views through redacted payload policy"
+      ],
+      "acceptance_criteria": [
+        "Workspace supports add move resize hide and preset actions for widgets",
+        "Widgets display freshness age and attribution confidence without custom code per widget",
+        "Team sync exports omit local sensitive identifiers unless explicit allowlist permits"
+      ],
+      "tests": [
+        "End-to-end test covers layout editing persistence and reload behavior",
+        "Integration test validates redaction policy before sync publication",
+        "Accessibility test checks keyboard navigation for widget layout controls"
+      ],
+      "code_intents": [
+        {
+          "id": "CI-M-005-001",
+          "version": 1,
+          "file": "apps/dashboard-web/src/components/layout/GridEditor.tsx",
+          "function": "GridEditor",
+          "behavior": "Implement drag and resize dashboard editor that applies declarative layout operations and persists ordering and geometry changes predictably.",
+          "decision_refs": [
+            "DL-005",
+            "DL-008"
+          ]
+        },
+        {
+          "id": "CI-M-005-002",
+          "version": 1,
+          "file": "apps/dashboard-web/src/components/widgets/WidgetShell.tsx",
+          "function": "WidgetShell",
+          "behavior": "Render certified widget payloads with embedded freshness age and attribution confidence states and consistent uncertainty visuals.",
+          "decision_refs": [
+            "DL-004",
+            "DL-005"
+          ]
+        },
+        {
+          "id": "CI-M-005-003",
+          "version": 1,
+          "file": "apps/dashboard-sync/src/sync/redaction_policy.py",
+          "function": "redact_view_payload",
+          "behavior": "Apply allowlist-based redaction for shared view payloads to keep sensitive local identifiers out of optional team sync artifacts.",
+          "decision_refs": [
+            "DL-006",
+            "DL-009"
+          ]
+        }
+      ],
+      "code_changes": [],
+      "documentation": {
+        "module_comment": null,
+        "docstrings": [],
+        "function_blocks": [],
+        "inline_comments": []
+      },
+      "is_documentation_only": false,
+      "delegated_to": null
+    }
+  ],
+  "waves": [
+    {
+      "id": "W-001",
+      "milestones": [
+        "M-001",
+        "M-002",
+        "M-003"
+      ]
+    },
+    {
+      "id": "W-002",
+      "milestones": [
+        "M-004"
+      ]
+    },
+    {
+      "id": "W-003",
+      "milestones": [
+        "M-005"
+      ]
+    }
+  ],
+  "diagram_graphs": [
+    {
+      "id": "DIAG-001",
+      "type": "architecture",
+      "scope": "overview",
+      "title": "Product Architecture",
+      "nodes": [
+        {
+          "id": "collectors",
+          "label": "Local Collectors",
+          "type": "service"
+        },
+        {
+          "id": "event_store",
+          "label": "Usage Event Store",
+          "type": "database"
+        },
+        {
+          "id": "analytics_api",
+          "label": "Analytics API",
+          "type": "service"
+        },
+        {
+          "id": "memory_pipeline",
+          "label": "Memory Insight Pipeline",
+          "type": "service"
+        },
+        {
+          "id": "view_api",
+          "label": "View and Widget API",
+          "type": "service"
+        },
+        {
+          "id": "web_app",
+          "label": "Dashboard Web App",
+          "type": "client"
+        },
+        {
+          "id": "sync_service",
+          "label": "Optional Team Sync",
+          "type": "service"
+        }
+      ],
+      "edges": [
+        {
+          "source": "collectors",
+          "target": "event_store",
+          "label": "append canonical usage events",
+          "protocol": "local file and sqlite"
+        },
+        {
+          "source": "memory_pipeline",
+          "target": "event_store",
+          "label": "append memory metadata metrics",
+          "protocol": "local batch"
+        },
+        {
+          "source": "event_store",
+          "target": "analytics_api",
+          "label": "aggregate provider and project metrics",
+          "protocol": "SQL"
+        },
+        {
+          "source": "analytics_api",
+          "target": "view_api",
+          "label": "serve certified metric contracts",
+          "protocol": "HTTP JSON"
+        },
+        {
+          "source": "view_api",
+          "target": "web_app",
+          "label": "deliver layout and widget payloads",
+          "protocol": "HTTP JSON"
+        },
+        {
+          "source": "web_app",
+          "target": "sync_service",
+          "label": "publish optional shared views",
+          "protocol": "HTTPS"
+        },
+        {
+          "source": "sync_service",
+          "target": "view_api",
+          "label": "import redacted shared views",
+          "protocol": "HTTPS"
+        }
+      ],
+      "ascii_render": null
+    },
+    {
+      "id": "DIAG-002",
+      "type": "dataflow",
+      "scope": "invisible_knowledge",
+      "title": "Telemetry and Insight Dataflow",
+      "nodes": [
+        {
+          "id": "source_logs",
+          "label": "Provider Source Logs",
+          "type": "source"
+        },
+        {
+          "id": "normalize",
+          "label": "Normalization Stage",
+          "type": "process"
+        },
+        {
+          "id": "attribution",
+          "label": "Project Attribution Stage",
+          "type": "process"
+        },
+        {
+          "id": "ledger",
+          "label": "Canonical Usage Ledger",
+          "type": "store"
+        },
+        {
+          "id": "aggregates",
+          "label": "Cost and Token Aggregates",
+          "type": "process"
+        },
+        {
+          "id": "widgets",
+          "label": "Dashboard Widgets",
+          "type": "sink"
+        }
+      ],
+      "edges": [
+        {
+          "source": "source_logs",
+          "target": "normalize",
+          "label": "read raw usage payloads",
+          "protocol": "jsonl"
+        },
+        {
+          "source": "normalize",
+          "target": "attribution",
+          "label": "emit canonical events",
+          "protocol": "in-memory"
+        },
+        {
+          "source": "attribution",
+          "target": "ledger",
+          "label": "persist confidence annotated events",
+          "protocol": "append only"
+        },
+        {
+          "source": "ledger",
+          "target": "aggregates",
+          "label": "compute provider and project slices",
+          "protocol": "sql"
+        },
+        {
+          "source": "aggregates",
+          "target": "widgets",
+          "label": "serve certified metric payloads",
+          "protocol": "api"
+        }
+      ],
+      "ascii_render": null
+    }
+  ],
+  "readme_entries": []
+}

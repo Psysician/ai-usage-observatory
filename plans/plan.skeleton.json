@@ -1,0 +1,20 @@
+{
+  "schema_version": 2,
+  "overview": {
+    "problem": "",
+    "approach": ""
+  },
+  "planning_context": {
+    "decisions": [],
+    "rejected_alternatives": [],
+    "constraints": [],
+    "risks": []
+  },
+  "invisible_knowledge": {
+    "system": "",
+    "invariants": [],
+    "tradeoffs": []
+  },
+  "milestones": [],
+  "waves": []
+}

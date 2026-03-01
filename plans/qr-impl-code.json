@@ -1,0 +1,79 @@
+{
+  "phase": "impl-code",
+  "iteration": 1,
+  "items": [
+    {
+      "id": "qa-001",
+      "scope": "milestone:M-001",
+      "check": "Verify M-001 acceptance criteria: hourly/daily aggregate totals match source tolerance and every stored event has provider + project_id (or unknown) with attribution confidence and reason code.",
+      "status": "PASS",
+      "severity": "MUST",
+      "group_id": "component-m-001",
+      "version": 2
+    },
+    {
+      "id": "qa-002",
+      "scope": "milestone:M-002",
+      "check": "Verify M-002 acceptance criteria: metrics payload exposes provider/project splits for supported time buckets, returns estimated and billed cost layers with labels, and freshness state changes when source watermark ages past threshold.",
+      "status": "PASS",
+      "severity": "MUST",
+      "group_id": "component-m-002",
+      "version": 2
+    },
+    {
+      "id": "qa-003",
+      "scope": "milestone:M-003",
+      "check": "Verify M-003 acceptance criteria: memory insights return project churn/growth trends, response/persistence omit raw memory content, and unavailable files are surfaced via explicit freshness/error metadata.",
+      "status": "PASS",
+      "severity": "MUST",
+      "group_id": "component-m-003",
+      "version": 2
+    },
+    {
+      "id": "qa-004",
+      "scope": "milestone:M-004",
+      "check": "Verify M-004 acceptance criteria: users can create/update/clone views without mutating certified widgets, resolver enforces parameter validation plus role constraints, and shared view payload remains stable across restart snapshot reload.",
+      "status": "PASS",
+      "severity": "MUST",
+      "group_id": "component-m-004",
+      "version": 2
+    },
+    {
+      "id": "qa-005",
+      "scope": "milestone:M-005",
+      "check": "Verify M-005 acceptance criteria: workspace state supports add/move/resize/hide/preset actions, widget shell derives freshness age and attribution confidence metadata, and team share export redacts local sensitive identifiers unless allowlisted.",
+      "status": "PASS",
+      "severity": "MUST",
+      "group_id": "component-m-005",
+      "version": 2
+    },
+    {
+      "id": "qa-006",
+      "scope": "*",
+      "check": "Validate intent-marker compliance across modified implementation files: any :MARKER: annotations must follow ':MARKER: [what]; [why]' with non-empty rationale.",
+      "status": "PASS",
+      "severity": "MUST",
+      "group_id": "umbrella",
+      "version": 2
+    },
+    {
+      "id": "qa-007",
+      "scope": "*",
+      "check": "Validate structural quality baseline: no GOD_FUNCTION violations in modified implementation code (function length > 50 lines or nesting depth > 3).",
+      "status": "FAIL",
+      "severity": "SHOULD",
+      "group_id": "umbrella",
+      "version": 2,
+      "finding": "GOD_FUNCTION threshold exceeded in multiple implementation functions (e.g., normalize_usage_event len=91, parse_* providers len~81-85, resolve_project_attribution len=95)."
+    },
+    {
+      "id": "qa-008",
+      "scope": "*",
+      "check": "Validate cross-cutting error-handling consistency across ingestion and API routes: malformed/invalid inputs produce structured, auditable handling rather than silent drops or inconsistent schema.",
+      "status": "PASS",
+      "severity": "SHOULD",
+      "group_id": "umbrella",
+      "version": 2
+    }
+  ]
+}

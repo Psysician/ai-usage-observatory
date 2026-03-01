@@ -1,0 +1,2 @@
+"""Observability API route package."""
+

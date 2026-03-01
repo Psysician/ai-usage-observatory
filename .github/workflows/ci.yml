@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest fastapi
+
+      - name: Run Python tests and compile checks
+        run: make test-python
+
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: apps/dashboard-web/package-lock.json
+
+      - name: Install web dependencies
+        run: npm --prefix apps/dashboard-web ci
+
+      - name: Run web checks
+        run: |
+          npm --prefix apps/dashboard-web run typecheck
+          npm --prefix apps/dashboard-web run test:e2e
