@@ -41,6 +41,9 @@ jobs:
       - name: Install web dependencies
         run: npm --prefix apps/dashboard-web ci
 
+      - name: Install Playwright Chromium
+        run: npm --prefix apps/dashboard-web exec playwright install chromium
+
       - name: Run web checks
         run: |
           npm --prefix apps/dashboard-web run typecheck
