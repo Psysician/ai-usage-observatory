@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { createServer } from "node:http";
 import { resolve } from "node:path";
 
 import { expect, test } from "@playwright/test";
@@ -174,5 +175,62 @@ test.describe("customization and share", () => {
     const redactionMeta = allowlisted.redaction as Record<string, unknown>;
     const allowlistedPaths = redactionMeta.allowlisted_sensitive_paths as string[];
     expect(allowlistedPaths).toContain("spec.owner.user_id");
+  });
+
+  test("browser renders provider widget from live API payload", async ({ page }: { page: import("@playwright/test").Page }) => {
+    const server = createServer((req, res) => {
+      if (req.url?.startsWith("/metrics")) {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(
+          JSON.stringify({
+            generated_at: "2026-03-01T00:00:00Z",
+            provider_split: [{ provider: "claude", tokens_total: 210 }],
+            auditability: {
+              freshness: { staleness_seconds: 42 },
+              attribution_coverage_pct: 97.5,
+            },
+          }),
+        );
+        return;
+      }
+
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      res.end(`<!doctype html>
+<html>
+  <body>
+    <section aria-label="Provider Token Split widget">
+      <h1>Provider Token Split</h1>
+      <div data-testid="provider-total">loading</div>
+      <div data-testid="provider-freshness">loading</div>
+    </section>
+    <script>
+      fetch('/metrics?time_bucket=day')
+        .then((r) => r.json())
+        .then((payload) => {
+          const total = payload.provider_split?.[0]?.tokens_total;
+          const freshness = payload.auditability?.freshness?.staleness_seconds;
+          document.querySelector('[data-testid="provider-total"]').textContent =
+            String(total ?? 'missing');
+          document.querySelector('[data-testid="provider-freshness"]').textContent =
+            String(freshness ?? 'missing');
+        });
+    </script>
+  </body>
+</html>`);
+    });
+
+    await new Promise<void>((resolveReady) => {
+      server.listen(0, "127.0.0.1", () => resolveReady());
+    });
+    const address = server.address();
+    const port = typeof address === "object" && address ? address.port : 0;
+
+    try {
+      await page.goto(`http://127.0.0.1:${port}/`);
+      await expect(page.getByTestId("provider-total")).toHaveText("210");
+      await expect(page.getByTestId("provider-freshness")).toHaveText("42");
+    } finally {
+      await new Promise<void>((resolveDone) => server.close(() => resolveDone()));
+    }
   });
 });

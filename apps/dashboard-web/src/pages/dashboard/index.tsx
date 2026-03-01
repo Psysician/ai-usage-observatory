@@ -56,6 +56,31 @@ function labelFor(widgetId: string): string {
   return "Provider Token Split";
 }
 
+function apiBaseUrl(): string {
+  if (typeof window === "undefined") {
+    return "";
+  }
+  const value = (window as Window & { __AIO_API_BASE__?: string }).__AIO_API_BASE__;
+  if (typeof value === "string" && value.trim().length > 0) {
+    return value.trim().replace(/\/+$/, "");
+  }
+  return "";
+}
+
+async function fetchProviderTokenPayload(timeBucket: string): Promise<WidgetPayloadEnvelope | null> {
+  const base = apiBaseUrl();
+  const url = `${base}/metrics?time_bucket=${encodeURIComponent(timeBucket)}`;
+  try {
+    const response = await fetch(url);
+    if (!response.ok) {
+      return null;
+    }
+    return (await response.json()) as WidgetPayloadEnvelope;
+  } catch {
+    return null;
+  }
+}
+
 const ADDABLE_WIDGET_IDS = [
   "provider-token-split",
   "project-cost-variance",
@@ -66,12 +91,61 @@ export default function DashboardPage(): JSX.Element {
   const store = useMemo(() => createSeededViewStore(), []);
   const [state, setState] = useState<DashboardViewState>(() => store.getState());
   const [nextWidgetCounter, setNextWidgetCounter] = useState(1);
+  const [livePayloads, setLivePayloads] = useState<Record<string, WidgetPayloadEnvelope>>({});
 
   useEffect(() => {
     return store.subscribe(() => {
       setState(store.getState());
     });
   }, [store]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const providerWidgets = state.order
+      .map((bindingId) => ({
+        bindingId,
+        widget: state.widgets[bindingId],
+      }))
+      .filter((entry): entry is { bindingId: string; widget: NonNullable<DashboardViewState["widgets"][string]> } => {
+        return Boolean(entry.widget) && entry.widget.widgetId === "provider-token-split";
+      });
+
+    if (providerWidgets.length === 0) {
+      return;
+    }
+
+    const load = async () => {
+      const results = await Promise.all(
+        providerWidgets.map(async ({ bindingId, widget }) => {
+          const timeBucket =
+            typeof widget.params.time_bucket === "string" && widget.params.time_bucket
+              ? widget.params.time_bucket
+              : "day";
+          const payload = await fetchProviderTokenPayload(timeBucket);
+          return [bindingId, payload] as const;
+        }),
+      );
+
+      if (cancelled) {
+        return;
+      }
+
+      setLivePayloads((previous) => {
+        const next = { ...previous };
+        for (const [bindingId, payload] of results) {
+          if (payload) {
+            next[bindingId] = payload;
+          }
+        }
+        return next;
+      });
+    };
+
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [state.order, state.widgets]);
 
   const widgetPayloads = useMemo(() => {
     const map: Record<string, WidgetPayloadEnvelope> = {};
@@ -80,10 +154,14 @@ export default function DashboardPage(): JSX.Element {
       if (!widget) {
         continue;
       }
+      if (widget.widgetId === "provider-token-split" && livePayloads[bindingId]) {
+        map[bindingId] = livePayloads[bindingId];
+        continue;
+      }
       map[bindingId] = payloadFor(widget.widgetId);
     }
     return map;
-  }, [state.order, state.widgets]);
+  }, [livePayloads, state.order, state.widgets]);
 
   const addWidget = () => {
     const widgetId = ADDABLE_WIDGET_IDS[nextWidgetCounter % ADDABLE_WIDGET_IDS.length];

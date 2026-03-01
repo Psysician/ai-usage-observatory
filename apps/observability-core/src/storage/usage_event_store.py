@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -189,7 +190,14 @@ class UsageEventStore:
         )
 
 
-_DEFAULT_EVENT_STORE = UsageEventStore()
+def _default_backing_file() -> Path | None:
+    raw = os.getenv("USAGE_EVENT_STORE_FILE", "").strip()
+    if not raw:
+        return None
+    return Path(raw).expanduser()
+
+
+_DEFAULT_EVENT_STORE = UsageEventStore(backing_file=_default_backing_file())
 
 
 def append_usage_events(events: Iterable[UsageEvent]) -> int:
@@ -209,4 +217,4 @@ def get_usage_events() -> list[dict[str, object]]:
 
 def reset_usage_event_store() -> None:
     global _DEFAULT_EVENT_STORE
-    _DEFAULT_EVENT_STORE = UsageEventStore()
+    _DEFAULT_EVENT_STORE = UsageEventStore(backing_file=_default_backing_file())
