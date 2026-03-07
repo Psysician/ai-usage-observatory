@@ -127,6 +127,14 @@ def _resolve_capabilities(
     return set(ROLE_CAPABILITIES[actor_role])
 
 
+def _build_drilldown(widget_id: str, analytics_route: str, params: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "path": analytics_route,
+        "label": f"{widget_id} details",
+        "params": dict(params),
+    }
+
+
 
 def resolve_widget_query(
     widget_binding: Mapping[str, Any],
@@ -206,6 +214,15 @@ def resolve_widget_query(
             "catalog_version": CATALOG_VERSION,
             "widget_id": widget_id,
             "metric_lineage": list(widget["metric_lineage"]),
+        },
+        "drilldown": _build_drilldown(
+            widget_id=widget_id,
+            analytics_route=str(widget["analytics_route"]),
+            params=normalized_params,
+        ),
+        "response_envelope": {
+            "version": "1.0",
+            "keys": ["data", "auditability", "provenance", "drilldown"],
         },
     }
 

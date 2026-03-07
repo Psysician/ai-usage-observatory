@@ -1,12 +1,26 @@
 import type { ReactNode } from "react";
 
 export interface WidgetPayloadEnvelope {
+  data?: unknown;
   generated_at?: string;
+  provenance?: {
+    catalog_version?: string;
+    widget_id?: string;
+    metric_lineage?: string[];
+    [key: string]: unknown;
+  };
+  drilldown?: {
+    path?: string;
+    label?: string;
+    params?: Record<string, unknown>;
+  };
   auditability?: {
     freshness?: {
       staleness_seconds?: number;
       source_watermark?: string | null;
       generated_at?: string;
+      freshness_state?: string;
+      quality_flags?: string[];
     };
     attribution_coverage_pct?: number;
     attribution_confidence_pct?: number;
@@ -34,6 +48,10 @@ function asRecord(value: unknown): Record<string, unknown> {
     return {};
   }
   return value as Record<string, unknown>;
+}
+
+function hasKeys(value: Record<string, unknown>): boolean {
+  return Object.keys(value).length > 0;
 }
 
 function parseTimestamp(value: unknown): number | null {
@@ -167,6 +185,20 @@ export function WidgetShell(props: WidgetShellProps): JSX.Element {
         </div>
       </header>
       <div>{props.children}</div>
+      {(props.payload?.provenance || props.payload?.drilldown?.path) && (
+        <footer style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", fontSize: "0.75rem", color: "#667085" }}>
+          {props.payload?.provenance?.catalog_version && (
+            <span data-testid={`${props.widgetId}-catalog-version`}>
+              Catalog v{props.payload.provenance.catalog_version}
+            </span>
+          )}
+          {props.payload?.drilldown?.path && (
+            <span data-testid={`${props.widgetId}-drilldown-path`}>
+              Drilldown {props.payload.drilldown.path}
+            </span>
+          )}
+        </footer>
+      )}
     </section>
   );
 }
@@ -183,25 +215,66 @@ export function readAuditabilitySnapshot(payload: WidgetPayloadEnvelope | undefi
 
 export function widgetPayloadFromUnknown(input: unknown): WidgetPayloadEnvelope {
   const root = asRecord(input);
+  const auditability = asRecord(root.auditability);
+  const primaryFreshness = asRecord(auditability.freshness);
+  const fallbackFreshness = asRecord(root.freshness);
+  const provenance = asRecord(root.provenance);
+  const drilldown = asRecord(root.drilldown);
+  const normalizedDrilldown: WidgetPayloadEnvelope["drilldown"] = hasKeys(drilldown)
+    ? {
+        path: typeof drilldown.path === "string" ? drilldown.path : undefined,
+        label: typeof drilldown.label === "string" ? drilldown.label : undefined,
+        params: asRecord(drilldown.params),
+      }
+    : undefined;
+
+  const freshnessSource = hasKeys(primaryFreshness) ? primaryFreshness : fallbackFreshness;
+  const stalenessSeconds = asFiniteNumber(freshnessSource.staleness_seconds);
+  const sourceWatermark =
+    typeof freshnessSource.source_watermark === "string"
+      ? freshnessSource.source_watermark
+      : null;
+  const generatedAtFreshness =
+    typeof freshnessSource.generated_at === "string"
+      ? freshnessSource.generated_at
+      : undefined;
+  const freshnessState =
+    typeof freshnessSource.freshness_state === "string"
+      ? freshnessSource.freshness_state
+      : undefined;
+  const qualityFlags = Array.isArray(freshnessSource.quality_flags)
+    ? freshnessSource.quality_flags.filter((item): item is string => typeof item === "string")
+    : undefined;
+
   return {
+    data: Object.prototype.hasOwnProperty.call(root, "data") ? root.data : input,
     generated_at: typeof root.generated_at === "string" ? root.generated_at : undefined,
+    provenance: hasKeys(provenance)
+      ? {
+          catalog_version:
+            typeof provenance.catalog_version === "string"
+              ? provenance.catalog_version
+              : undefined,
+          widget_id:
+            typeof provenance.widget_id === "string" ? provenance.widget_id : undefined,
+          metric_lineage: Array.isArray(provenance.metric_lineage)
+            ? provenance.metric_lineage.filter((item): item is string => typeof item === "string")
+            : undefined,
+        }
+      : undefined,
+    drilldown: normalizedDrilldown,
     attribution_confidence_pct: asFiniteNumber(root.attribution_confidence_pct) ?? undefined,
     auditability: {
       freshness: {
-        staleness_seconds: asFiniteNumber(asRecord(asRecord(root.auditability).freshness).staleness_seconds) ?? undefined,
-        source_watermark:
-          typeof asRecord(asRecord(root.auditability).freshness).source_watermark === "string"
-            ? (asRecord(asRecord(root.auditability).freshness).source_watermark as string)
-            : null,
-        generated_at:
-          typeof asRecord(asRecord(root.auditability).freshness).generated_at === "string"
-            ? (asRecord(asRecord(root.auditability).freshness).generated_at as string)
-            : undefined,
+        staleness_seconds: stalenessSeconds ?? undefined,
+        source_watermark: sourceWatermark,
+        generated_at: generatedAtFreshness,
+        freshness_state: freshnessState,
+        quality_flags: qualityFlags,
       },
-      attribution_coverage_pct:
-        asFiniteNumber(asRecord(root.auditability).attribution_coverage_pct) ?? undefined,
+      attribution_coverage_pct: asFiniteNumber(auditability.attribution_coverage_pct) ?? undefined,
       attribution_confidence_pct:
-        asFiniteNumber(asRecord(root.auditability).attribution_confidence_pct) ?? undefined,
+        asFiniteNumber(auditability.attribution_confidence_pct) ?? undefined,
     },
   };
 }
