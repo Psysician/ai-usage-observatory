@@ -4,12 +4,17 @@ import { GridEditor } from "../../components/layout/GridEditor";
 import {
   createSeededViewStore,
   type DashboardViewState,
+  type ViewWidget,
 } from "../../state/viewStore";
-import type { WidgetPayloadEnvelope } from "../../components/widgets/WidgetShell";
+import {
+  widgetPayloadFromUnknown,
+  type WidgetPayloadEnvelope,
+} from "../../components/widgets/WidgetShell";
 
-function payloadFor(widgetId: string): WidgetPayloadEnvelope {
+function fallbackPayloadFor(widgetId: string): WidgetPayloadEnvelope {
   if (widgetId === "project-cost-variance") {
     return {
+      data: { projects: [] },
       generated_at: "2026-03-01T00:00:00+00:00",
       auditability: {
         freshness: {
@@ -23,6 +28,7 @@ function payloadFor(widgetId: string): WidgetPayloadEnvelope {
 
   if (widgetId === "memory-churn-overview") {
     return {
+      data: { projects: [], freshness: { freshness_state: "partial" } },
       generated_at: "2026-03-01T00:00:00+00:00",
       auditability: {
         freshness: {
@@ -35,6 +41,7 @@ function payloadFor(widgetId: string): WidgetPayloadEnvelope {
   }
 
   return {
+    data: { provider_split: [] },
     generated_at: "2026-03-01T00:00:00+00:00",
     auditability: {
       freshness: {
@@ -67,15 +74,100 @@ function apiBaseUrl(): string {
   return "";
 }
 
-async function fetchProviderTokenPayload(timeBucket: string): Promise<WidgetPayloadEnvelope | null> {
+function asRecord(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object") {
+    return {};
+  }
+  return value as Record<string, unknown>;
+}
+
+function asRows(value: unknown): Record<string, unknown>[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object");
+}
+
+function asNumber(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return null;
+  }
+  return value;
+}
+
+function formatUsd(value: number | null): string {
+  if (value === null) {
+    return "n/a";
+  }
+  return `$${value.toFixed(2)}`;
+}
+
+function widgetRequest(widget: ViewWidget): {
+  url: string;
+  init?: RequestInit;
+  drilldownPath: string;
+} | null {
+  const timeBucket =
+    typeof widget.params.time_bucket === "string" && widget.params.time_bucket
+      ? widget.params.time_bucket
+      : "day";
   const base = apiBaseUrl();
-  const url = `${base}/metrics?time_bucket=${encodeURIComponent(timeBucket)}`;
+
+  if (widget.widgetId === "provider-token-split") {
+    return {
+      url: `${base}/metrics?time_bucket=${encodeURIComponent(timeBucket)}`,
+      drilldownPath: "/metrics",
+    };
+  }
+
+  if (widget.widgetId === "project-cost-variance") {
+    return {
+      url: `${base}/projects?time_bucket=${encodeURIComponent(timeBucket)}`,
+      drilldownPath: "/projects",
+    };
+  }
+
+  if (widget.widgetId === "memory-churn-overview") {
+    return {
+      url: `${base}/memory/insights`,
+      init: {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ memory_file_paths: [] }),
+      },
+      drilldownPath: "/memory/insights",
+    };
+  }
+  return null;
+}
+
+async function fetchWidgetPayload(widget: ViewWidget): Promise<WidgetPayloadEnvelope | null> {
+  const request = widgetRequest(widget);
+  if (!request) {
+    return null;
+  }
+
   try {
-    const response = await fetch(url);
+    const response = await fetch(request.url, request.init);
     if (!response.ok) {
       return null;
     }
-    return (await response.json()) as WidgetPayloadEnvelope;
+    const root = (await response.json()) as unknown;
+    const envelope = widgetPayloadFromUnknown(root);
+    if (!envelope.provenance) {
+      envelope.provenance = {
+        widget_id: widget.widgetId,
+        catalog_version: "runtime",
+      };
+    }
+    if (!envelope.drilldown) {
+      envelope.drilldown = {
+        path: request.drilldownPath,
+        label: `${widget.title} details`,
+        params: { ...widget.params },
+      };
+    }
+    return envelope;
   } catch {
     return null;
   }
@@ -86,6 +178,7 @@ const ADDABLE_WIDGET_IDS = [
   "project-cost-variance",
   "memory-churn-overview",
 ];
+const LIVE_REFRESH_INTERVAL_MS = 15000;
 
 export default function DashboardPage(): JSX.Element {
   const store = useMemo(() => createSeededViewStore(), []);
@@ -101,35 +194,30 @@ export default function DashboardPage(): JSX.Element {
 
   useEffect(() => {
     let cancelled = false;
-    const providerWidgets = state.order
+    let timer: number | undefined;
+
+    const liveWidgets = state.order
       .map((bindingId) => ({
         bindingId,
         widget: state.widgets[bindingId],
       }))
-      .filter((entry): entry is { bindingId: string; widget: NonNullable<DashboardViewState["widgets"][string]> } => {
-        return Boolean(entry.widget) && entry.widget.widgetId === "provider-token-split";
-      });
-
-    if (providerWidgets.length === 0) {
-      return;
-    }
+      .filter(
+        (
+          entry,
+        ): entry is { bindingId: string; widget: NonNullable<DashboardViewState["widgets"][string]> } =>
+          Boolean(entry.widget),
+      );
 
     const load = async () => {
       const results = await Promise.all(
-        providerWidgets.map(async ({ bindingId, widget }) => {
-          const timeBucket =
-            typeof widget.params.time_bucket === "string" && widget.params.time_bucket
-              ? widget.params.time_bucket
-              : "day";
-          const payload = await fetchProviderTokenPayload(timeBucket);
+        liveWidgets.map(async ({ bindingId, widget }) => {
+          const payload = await fetchWidgetPayload(widget);
           return [bindingId, payload] as const;
         }),
       );
-
       if (cancelled) {
         return;
       }
-
       setLivePayloads((previous) => {
         const next = { ...previous };
         for (const [bindingId, payload] of results) {
@@ -142,8 +230,15 @@ export default function DashboardPage(): JSX.Element {
     };
 
     void load();
+    timer = window.setInterval(() => {
+      void load();
+    }, LIVE_REFRESH_INTERVAL_MS);
+
     return () => {
       cancelled = true;
+      if (timer !== undefined) {
+        window.clearInterval(timer);
+      }
     };
   }, [state.order, state.widgets]);
 
@@ -154,14 +249,81 @@ export default function DashboardPage(): JSX.Element {
       if (!widget) {
         continue;
       }
-      if (widget.widgetId === "provider-token-split" && livePayloads[bindingId]) {
+      if (livePayloads[bindingId]) {
         map[bindingId] = livePayloads[bindingId];
         continue;
       }
-      map[bindingId] = payloadFor(widget.widgetId);
+      map[bindingId] = fallbackPayloadFor(widget.widgetId);
     }
     return map;
   }, [livePayloads, state.order, state.widgets]);
+
+  const renderWidgetBody = (widget: ViewWidget): JSX.Element => {
+    const payload = widgetPayloads[widget.bindingId];
+    const data = asRecord(payload?.data);
+
+    if (widget.widgetId === "provider-token-split") {
+      const rows = asRows(data.provider_split);
+      const totalTokens = rows.reduce((acc, row) => acc + (asNumber(row.tokens_total) ?? 0), 0);
+      const providers = rows
+        .slice(0, 3)
+        .map((row) => `${String(row.provider ?? "unknown")}: ${Math.trunc(asNumber(row.tokens_total) ?? 0)}`)
+        .join(" | ");
+      return (
+        <div data-testid={`widget-body-${widget.bindingId}`} style={{ fontSize: "0.82rem", color: "#344054" }}>
+          <div><strong>Total tokens:</strong> {Math.trunc(totalTokens)}</div>
+          <div><strong>Providers:</strong> {providers || "no rows"}</div>
+          <div><strong>Drilldown:</strong> {payload?.drilldown?.path ?? "n/a"}</div>
+        </div>
+      );
+    }
+
+    if (widget.widgetId === "project-cost-variance") {
+      const projects = asRows(data.projects).slice(0, 4);
+      return (
+        <div data-testid={`widget-body-${widget.bindingId}`} style={{ fontSize: "0.82rem", color: "#344054" }}>
+          <div><strong>Projects:</strong> {projects.length}</div>
+          {projects.map((row, index) => {
+            const name = String(row.project_id ?? `project-${index + 1}`);
+            const variance = asNumber(row.cost_variance_usd);
+            return (
+              <div key={`${widget.bindingId}-${name}-${index}`}>
+                {name}: {formatUsd(variance)}
+              </div>
+            );
+          })}
+          <div><strong>Drilldown:</strong> {payload?.drilldown?.path ?? "n/a"}</div>
+        </div>
+      );
+    }
+
+    if (widget.widgetId === "memory-churn-overview") {
+      const projects = asRows(data.projects);
+      const freshness = asRecord(data.freshness);
+      return (
+        <div data-testid={`widget-body-${widget.bindingId}`} style={{ fontSize: "0.82rem", color: "#344054" }}>
+          <div><strong>Tracked projects:</strong> {projects.length}</div>
+          <div><strong>Freshness:</strong> {String(freshness.freshness_state ?? "partial")}</div>
+          <div><strong>Unavailable files:</strong> {Math.trunc(asNumber(freshness.unavailable_files) ?? 0)}</div>
+          <div><strong>Drilldown:</strong> {payload?.drilldown?.path ?? "n/a"}</div>
+        </div>
+      );
+    }
+
+    return (
+      <pre
+        data-testid={`widget-body-${widget.bindingId}`}
+        style={{
+          margin: 0,
+          whiteSpace: "pre-wrap",
+          fontSize: "0.8rem",
+          color: "#344054",
+        }}
+      >
+        {JSON.stringify(widget.params, null, 2)}
+      </pre>
+    );
+  };
 
   const addWidget = () => {
     const widgetId = ADDABLE_WIDGET_IDS[nextWidgetCounter % ADDABLE_WIDGET_IDS.length];
@@ -243,19 +405,7 @@ export default function DashboardPage(): JSX.Element {
         onHideWidget={(bindingId, hidden) => {
           store.hideWidget(bindingId, hidden);
         }}
-        renderBody={(widget) => (
-          <pre
-            data-testid={`widget-body-${widget.bindingId}`}
-            style={{
-              margin: 0,
-              whiteSpace: "pre-wrap",
-              fontSize: "0.8rem",
-              color: "#344054",
-            }}
-          >
-            {JSON.stringify(widget.params, null, 2)}
-          </pre>
-        )}
+        renderBody={renderWidgetBody}
       />
 
       <aside style={{ borderTop: "1px solid #eaeef2", paddingTop: "0.75rem" }}>

@@ -22,12 +22,14 @@ _purge_conflicting_modules("routes")
 from routes.memory_insights import router as memory_router
 from routes.metrics import router as metrics_router
 from routes.projects import router as projects_router
+from routes.ingest_status import router as ingest_router
 
 
 def create_app() -> FastAPI:
     app = FastAPI(title="AI Usage Observatory - Observability API", version="0.1.0")
     app.include_router(metrics_router)
     app.include_router(projects_router)
+    app.include_router(ingest_router)
     if memory_router is not None:
         app.include_router(memory_router)
 

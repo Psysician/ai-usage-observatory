@@ -87,6 +87,29 @@ def _load_events_from_store() -> list[dict[str, Any]]:
     return []
 
 
+def _load_store_freshness_snapshot() -> dict[str, Any] | None:
+    candidates: Sequence[tuple[str, str]] = (
+        ("storage.usage_event_store", "get_store_freshness_snapshot"),
+        ("storage.usage_event_store", "get_ingest_status_snapshot"),
+    )
+    for module_name, function_name in candidates:
+        try:
+            module = importlib.import_module(module_name)
+        except Exception:
+            continue
+        loader = getattr(module, function_name, None)
+        if loader is None or not callable(loader):
+            continue
+        try:
+            snapshot = loader()
+        except Exception:
+            continue
+        if not isinstance(snapshot, Mapping):
+            continue
+        return dict(snapshot)
+    return None
+
+
 def _merge_token_and_cost_rows(
     token_rows: list[dict[str, Any]],
     cost_rows: list[dict[str, Any]],
@@ -131,13 +154,25 @@ def build_metrics_payload(
     _validate_time_bucket(time_bucket)
 
     rows = [dict(item) for item in (events if events is not None else _load_events_from_store())]
+    store_snapshot: dict[str, Any] | None = None
+    effective_source_watermark = source_watermark
+    effective_source_complete = source_complete
+    if events is None:
+        store_snapshot = _load_store_freshness_snapshot()
+        if store_snapshot is not None:
+            if effective_source_watermark is None:
+                effective_source_watermark = store_snapshot.get("source_watermark")
+            effective_source_complete = bool(
+                store_snapshot.get("source_complete", effective_source_complete)
+            )
+
     coverage_pct = attribution_coverage_pct(rows)
     freshness = build_freshness_metadata(
-        source_watermark or derive_source_watermark(rows),
+        effective_source_watermark or derive_source_watermark(rows),
         now=now,
         warm_after_seconds=warm_after_seconds,
         stale_after_seconds=stale_after_seconds,
-        source_complete=source_complete,
+        source_complete=effective_source_complete,
         attribution_coverage_pct=coverage_pct,
     )
 
@@ -173,6 +208,15 @@ def build_metrics_payload(
             "attribution_coverage_pct": coverage_pct,
             "unknown_project_share_pct": unknown_project_token_share_pct(rows),
             "cost_layer_labels": get_cost_layer_labels(),
+            "source_status": {
+                "source_complete": effective_source_complete,
+                "source_watermark": freshness.get("source_watermark"),
+                "connectors": (
+                    list(store_snapshot.get("connectors", []))
+                    if isinstance(store_snapshot, Mapping)
+                    else []
+                ),
+            },
         },
     }
 

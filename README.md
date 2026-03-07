@@ -47,8 +47,25 @@ make test
 
 ```bash
 python3 -m pip install fastapi uvicorn
+# optional: persist canonical event ledger in a custom SQLite file
+export USAGE_EVENT_STORE_DB=/tmp/ai-usage-observatory/usage-events.sqlite3
 uvicorn main:app --app-dir apps/observability-api/src --reload --port 8000
 uvicorn main:app --app-dir apps/dashboard-api/src --reload --port 8001
+```
+
+### Runtime status endpoint
+
+```bash
+curl -s http://127.0.0.1:8000/ingest/status | jq .
+```
+
+### Trigger codex-lb SQLite import
+
+```bash
+curl -s -X POST http://127.0.0.1:8000/ingest/run \
+  -H 'content-type: application/json' \
+  -d '{"sources":[{"connector":"codex_lb_sqlite","source_path":"~/.codex-lb/store.db"}]}' \
+  | jq .
 ```
 
 ### Web checks
